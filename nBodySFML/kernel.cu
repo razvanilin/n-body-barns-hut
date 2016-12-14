@@ -44,7 +44,7 @@ float const SimHeight = 327680;
 float const ViewWidth = 1920;                   //Width and height of view of the simulation for the screen. 
 float const ViewHeight = 1080;
 float const Softener = 10;                      //A softener used for the force calculations, 10 is a good amount
-unsigned int const NumParticles = 100000;        //Number of particles in simtulation, currently 2^15                                
+unsigned int const NumParticles = 10000;        //Number of particles in simtulation, currently 2^15                                
 double const _NODE_THRESHOLD = 0.5;             //Threshold for node calculations   
 
 float zoom = 1;                                 //The current amount of zoom in or out the user has inputed in total
@@ -175,7 +175,7 @@ void BodyAttraction(std::vector<Body*> pBodies, float pSoftener)
 
 void OctreeBodyAttraction()
 {
-#pragma omp parallel for num_threads(thread_count)
+
 	for (unsigned int i = 0; i < Bodies.size(); i++)
 	{
 		CheckNode(&GlobalNode, Bodies[i]);
@@ -306,7 +306,6 @@ void PopulateBodyVectorDisk(std::vector<Body*> *pBodies, unsigned int pParticles
 {
 	srand(static_cast<unsigned int> (time(0)));
 
-#pragma omp parallel for num_threads(thread_count)
 	for (unsigned int i = 0; i < pParticlesCount; i++)
 	{
 		float angle = static_cast <float> (rand()) / (static_cast <float> (RAND_MAX / (2 * static_cast <float> (_PI))));    //sets angle to random float range (0, 2 pi) 
@@ -332,7 +331,6 @@ void PopulateBodyVectorUniform(std::vector<Body*> *pBodies, unsigned int pPartic
 {
 	srand(static_cast<unsigned int> (time(0)));
 
-#pragma omp parallel for num_threads(thread_count)
 	for (unsigned int i = 0; i < pParticlesCount; i++)
 	{
 		float positionx = static_cast <float> (rand()) / static_cast <float> (RAND_MAX) * pWidth + (SimWidth / 2 - pWidth / 2);
@@ -351,7 +349,6 @@ void Render(sf::RenderWindow* pTarget, std::vector<Body*> pBodies, sf::Color pOb
 	sf::RectangleShape Temp;
 	//Temp.setFillColor(pObjColor);
 
-#pragma omp parallel for num_threads(thread_count)
 	for (unsigned int i = 0; i < pBodies.size(); i++)
 	{
 		if (zoom > 1)

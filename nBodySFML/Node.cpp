@@ -83,7 +83,7 @@ void Node::SetParam(std::vector<Body*> pBodies, float pwidth, float pheight, flo
 	for (int i = 0; i < pBodies.size(); i++)
 	{
 		mass += pBodies[i]->mass;
-		Centerx += pBodies[i]->posX;
+		Centerx += pBodies[i]->posX; 
 		Centery += pBodies[i]->posY;
 	}
 
