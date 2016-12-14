@@ -22,7 +22,7 @@ void Node::GenerateChildren()
 {
 	std::vector<Body*> q1Bodies, q2Bodies, q3Bodies, q4Bodies;
 
-#pragma omp parallel for num_threads(thread_count) private(q1Bodies, q2Bodies, q3Bodies, q4Bodies)
+//#pragma omp parallel for num_threads(thread_count) private(q1Bodies, q2Bodies, q3Bodies, q4Bodies)
 	for (int i = 0; i < Bodies.size(); i++)
 	{
 		if (Bodies[i]->posX < (posX + (width / 2)))     //if true, 1st or 3rd
