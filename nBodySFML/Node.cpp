@@ -78,9 +78,10 @@ void Node::SetParam(std::vector<Body*> pBodies, float pwidth, float pheight, flo
 	float mass = 0;
 	double Centerx = 0;
 	double Centery = 0;
+	unsigned int size = pBodies.size();
 
 #pragma omp parallel for num_threads(thread_count) schedule(static, 1)
-	for (int i = 0; i < pBodies.size(); i++)
+	for (int i = 0; i < size; i++)
 	{
 		mass += pBodies[i]->mass;
 		Centerx += pBodies[i]->posX; 
@@ -89,10 +90,10 @@ void Node::SetParam(std::vector<Body*> pBodies, float pwidth, float pheight, flo
 
 	TotalMass = mass;
 
-	unsigned int size = pBodies.size();
-
-	CenterOfMassx = Centerx / size;
-	CenterOfMassy = Centery / size;
+	if (size > 0) {
+		CenterOfMassx = Centerx / size;
+		CenterOfMassy = Centery / size;
+	}
 
 	if (Bodies.size() > 1 && Depth < _MAX_DEPTH)
 	{
@@ -107,10 +108,6 @@ void Node::Reset()
 	for (unsigned int i = 0; i < Child.size(); i++)
 	{
 		Child[i]->Reset();
-	}
-
-	for (unsigned int i = 0; i < Child.size(); i++)
-	{
 		delete Child[i];
 	}
 

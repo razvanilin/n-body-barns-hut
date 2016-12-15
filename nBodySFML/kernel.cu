@@ -1,6 +1,12 @@
 
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
+#include "thrust\device_vector.h"
+#include "thrust\device_ptr.h"
+#include "thrust\device_malloc.h"
+#include "thrust\device_free.h"
+#include <curand.h>
+#include <curand_kernel.h>
 
 #include <stdio.h>
 
@@ -8,36 +14,37 @@
 #include "Node.h"
 #include <ctime>
 #include <math.h>
+#include <cmath>
 #include <vector>
 #include <omp.h>
 #include <thread>
 #include <random>
+#include <complex>
 
 #define _PI 3.14159265      //Pi, used for calculations and rounded to 8 decimal places. 
 #define _GRAV_CONST 0.1     //the gravitational constant. This is the timestep between each frame. Lower for slower but more accurate simulations
 
-void BodyAttraction(std::vector<Body*> pBodies, float pSoftener);                                                                       //Attracts each body to each other body in the given vector of pointers to body objects
+void BodyAttraction(std::vector<Body*> &pBodies, float pSoftener);                                                                       //Attracts each body to each other body in the given vector of pointers to body objects
 void CalculateForceNode(Body* bi, Node* bj, float pSoftener);                                                                           //Calculate force exerted on body from node
 void CalculateForce(Body* bi, Body* bj, float pSoftener);                                                                               //Calculate force exerted on eachother between two bodies
-Body* CreateBody(float px, float py, float pmass, float pvx = 0, float pvy = 0);                                                        //return a pointer to new body object defined on the heap with given paramiters
-void DeleteBodies(std::vector<Body*> pBodies);                                                                                          //Deletes objects pointed to by given vector
+//Body* CreateBody(float px, float py, float pmass, float pvx = 0, float pvy = 0);                                                        //return a pointer to new body object defined on the heap with given paramiters
+void DeleteBodies(std::vector<Body*> &pBodies);                                                                                          //Deletes objects pointed to by given vector
 void PollEvent(sf::RenderWindow* pTarget, bool* pIsPaused, sf::View* pSimView);                                                         //Call all polled events for the sf::window
 void PopulateBodyVectorDisk(std::vector<Body*> *pBodies, unsigned int pParticlesCount, float pWidth, float pHeight, float pMaxDist, float pMinDist, float pMinMass, float pMaxMass, float pGalaticCenterMass = 0);  //populate given vector with bodies with given paramiters in a disk formation
-void PopulateBodyVectorUniform(std::vector<Body*> *pBodies, unsigned int pParticlesCount, float pWidth, float pHeight, float pMinMass, float pMaxMass);
 void Render(sf::RenderWindow* pTarget, std::vector<Body*> pBodies, sf::Color pObjColor);                                                //Render given body objects to given screen
 void SetView(sf::View* pView, sf::RenderWindow* pTarget, float pViewWidth, float pViewHeight);                                          //set the window to the simulation view
-void UpdateBodies(std::vector<Body*> pBodies);                                                                                          //Calculate velocity chance from the bodies force exerted since last update, update position based on velocity, reset force to 0
+void UpdateBodies(std::vector<Body*> &pBodies);                                                                                          //Calculate velocity chance from the bodies force exerted since last update, update position based on velocity, reset force to 0
 void DrawNode(Node* pNode, sf::RenderWindow* pTarget);                                                                                  //Draw a node to the screen, and all of its children (recursive)
 void CheckNode(Node* pNode, Body* pBody);                                                                                               //Checks if a node is sufficently far away for force calculation, if not recureses on nodes children
 void OctreeBodyAttraction();                                                                                                            //Using a calculated oct-tree, calculate the force exerted on each object
-void AttractToCenter(std::vector<Body*> pBodies, float width, float height, float centerMass);                                                                                                                  //Attract each particle to the center of the simulation
-void ResetForces(std::vector<Body*> pBodies);
-void RepellFromCenter(std::vector<Body*> pBodies, float width, float height, float centerMass);
+void AttractToCenter(std::vector<Body*> &pBodies, float width, float height, float centerMass);                                                                                                                  //Attract each particle to the center of the simulation
+void ResetForces(std::vector<Body*> &pBodies);
+void RepellFromCenter(std::vector<Body*> &pBodies, float width, float height, float centerMass);
 
 float const DiskRadiusMax = 20000;              //Max and min distances objects will be from the galatic center
 float const DiskRadiusMin = 50;
 float const GalaticCenterMass = 1000000;        //The mass of the very large object simulating a black hole at the center of a galixy;
-float const ObjectMassMax = 5;                  //The max and min mass of the objects in the galixy
+float const ObjectMassMax = 2;                  //The max and min mass of the objects in the galixy
 float const ObjectMassMin = 1;
 float const SimWidth = 327680;                  //Width and height of simulation, needs to be large, particles outside of this range will not be included in the octree
 float const SimHeight = 327680;
@@ -119,9 +126,9 @@ int main()
     return 0;
 }
 
-void AttractToCenter(std::vector<Body*> pBodies, float width, float height, float centerMass)
+void AttractToCenter(std::vector<Body *> &pBodies, float width, float height, float centerMass)
 {
-	Body* Temp = CreateBody(width / 2, height / 2, centerMass); //Create a body at the center of the simulation
+	Body* Temp = new Body(width / 2, height / 2, centerMass); //Create a body at the center of the simulation
 
 	for (unsigned int i = 0; i < pBodies.size(); i++)
 	{
@@ -131,9 +138,9 @@ void AttractToCenter(std::vector<Body*> pBodies, float width, float height, floa
 	delete Temp;
 }
 
-void RepellFromCenter(std::vector<Body*> pBodies, float width, float height, float centerMass)
+void RepellFromCenter(std::vector<Body*> &pBodies, float width, float height, float centerMass)
 {
-	Body* Temp = CreateBody(width / 2, height / 2, centerMass); //Create a body at the center of the simulation
+	Body* Temp = new Body(width / 2, height / 2, centerMass); //Create a body at the center of the simulation
 
 	for (unsigned int i = 0; i < pBodies.size(); i++)
 	{
@@ -153,7 +160,7 @@ void RepellFromCenter(std::vector<Body*> pBodies, float width, float height, flo
 	delete Temp;
 }
 
-void ResetForces(std::vector<Body*> pBodies)
+void ResetForces(std::vector<Body*> &pBodies)
 {
 	for (unsigned int i = 0; i < pBodies.size(); i++)
 	{
@@ -162,7 +169,7 @@ void ResetForces(std::vector<Body*> pBodies)
 	}
 }
 
-void BodyAttraction(std::vector<Body*> pBodies, float pSoftener)
+void BodyAttraction(std::vector<Body*> &pBodies, float pSoftener)
 {
 	for (unsigned int i = 0; i < pBodies.size(); i++)
 	{
@@ -226,6 +233,8 @@ inline void CalculateForceNode(Body* bi, Node* bj, float pSoftener)  //bi is bei
 	bi->forceY += vectory * force;
 }
 
+//__global__ void calculateForceKernel(Body )
+
 inline void CalculateForce(Body* bi, Body* bj, float pSoftener)  //bi is being attracted to bj. 15 flops of calculation
 {
 	//std::vector from i to j
@@ -246,7 +255,7 @@ inline void CalculateForce(Body* bi, Body* bj, float pSoftener)  //bi is being a
 	bi->forceY += vectory * force;
 }
 
-Body* CreateBody(float px, float py, float pmass, float pvx, float pvy)
+/*Body* CreateBody(float px, float py, float pmass, float pvx, float pvy)
 {
 	Body* Temp = new Body;
 
@@ -258,9 +267,9 @@ Body* CreateBody(float px, float py, float pmass, float pvx, float pvy)
 	Temp->forceX = Temp->forceY = 0;
 
 	return Temp;
-}
+}*/
 
-void DeleteBodies(std::vector<Body*> pBodies)
+void DeleteBodies(std::vector<Body*> &pBodies)
 {
 	for (unsigned int i = 0; i < pBodies.size(); i++)
 	{
@@ -304,43 +313,33 @@ void PollEvent(sf::RenderWindow* pTarget, bool* pIsPaused, sf::View* pSimView)
 
 void PopulateBodyVectorDisk(std::vector<Body*> *pBodies, unsigned int pParticlesCount, float pWidth, float pHeight, float pMaxDist, float pMinDist, float pMinMass, float pMaxMass, float pGalaticCenterMass)
 {
-	srand(static_cast<unsigned int> (time(0)));
+
+	std::random_device rd;
+	std::mt19937 gen(rd());
+	std::uniform_real_distribution<float> dist(0, 1); //pMinDist, pMaxDist);
+	std::uniform_real_distribution<float> angle(0, 2*_PI);
+	std::uniform_real_distribution<float> mass(pMinMass, pMaxMass);
 
 	for (unsigned int i = 0; i < pParticlesCount; i++)
 	{
-		float angle = static_cast <float> (rand()) / (static_cast <float> (RAND_MAX / (2 * static_cast <float> (_PI))));    //sets angle to random float range (0, 2 pi) 
+		float theta = angle(gen);
+		float distanceCoefficient = dist(gen);
 
-		float distanceCoefficent = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-		float distance = pMinDist + ((pMaxDist - pMinDist) * (distanceCoefficent * distanceCoefficent));                    //Distance point will be from the galatic center, between MinDiskRadius and MaxDiskRadius
+		float distance = pMinDist + ((pMaxDist - pMinDist) * (distanceCoefficient * distanceCoefficient));                    //Distance point will be from the galatic center, between MinDiskRadius and MaxDiskRadius
 
-		float positionx = cos(angle) * distance + (pWidth / 2);                                                             //set positionx and positiony to be the point you get when you go in the direction of 'angle' till you have traveled 'distance' 
-		float positiony = sin(angle) * distance + (pHeight / 2);
+		float positionx = cos(theta) * distance + (pWidth / 2);                                                             //set positionx and positiony to be the point you get when you go in the direction of 'angle' till you have traveled 'distance' 
+		float positiony = sin(theta) * distance + (pHeight / 2);
 
 		float orbitalVelocity = sqrt((pGalaticCenterMass * static_cast <float> (_GRAV_CONST)) / distance);                  //Calculate the orbital velocity required to orbit the galatic centre   
 
-		float velocityx = (sin(angle) * orbitalVelocity);
-		float velocityy = (-cos(angle) * orbitalVelocity);
+		float velocityx = (sin(theta) * orbitalVelocity);
+		float velocityy = (-cos(theta) * orbitalVelocity);
 
-		float mass = pMinMass + static_cast <float> (rand() % static_cast <int> (pMaxMass - pMinMass));                     //random mass (int) in range (MinObjectMass, MaxObjectMass)
+		pBodies->push_back(new Body(positionx, positiony, mass(gen), velocityx, velocityy));
 
-		pBodies->push_back(CreateBody(positionx, positiony, mass, velocityx, velocityy));
 	}
 }
 
-void PopulateBodyVectorUniform(std::vector<Body*> *pBodies, unsigned int pParticlesCount, float pWidth, float pHeight, float pMinMass, float pMaxMass)
-{
-	srand(static_cast<unsigned int> (time(0)));
-
-	for (unsigned int i = 0; i < pParticlesCount; i++)
-	{
-		float positionx = static_cast <float> (rand()) / static_cast <float> (RAND_MAX) * pWidth + (SimWidth / 2 - pWidth / 2);
-		float positiony = static_cast <float> (rand()) / static_cast <float> (RAND_MAX) * pHeight + (SimHeight / 2 - pHeight / 2);
-
-		float mass = pMinMass + static_cast <float> (rand() % static_cast <int> (pMaxMass - pMinMass));                     //random mass (int) in range (MinObjectMass, MaxObjectMass)
-
-		pBodies->push_back(CreateBody(positionx, positiony, mass));
-	}
-}
 
 void Render(sf::RenderWindow* pTarget, std::vector<Body*> pBodies, sf::Color pObjColor)
 {
@@ -411,8 +410,10 @@ void SetView(sf::View* pView, sf::RenderWindow* pTarget, float pViewWidth, float
 	pTarget->setView(*pView);
 }
 
-void UpdateBodies(std::vector<Body*> pBodies)
+
+void UpdateBodies(std::vector<Body*> &pBodies)
 {
+
 	for (unsigned int i = 0; i < pBodies.size(); i++)
 	{
 		if ((pBodies[i]->posX > SimWidth && pBodies[i]->velX > 0) || (pBodies[i]->posX < 0 && pBodies[i]->velX < 0))
@@ -482,7 +483,7 @@ cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
 
     // Launch a kernel on the GPU with one thread for each element.
     addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
-
+	
     // Check for any errors launching the kernel
     cudaStatus = cudaGetLastError();
     if (cudaStatus != cudaSuccess) {
