@@ -20,3 +20,5 @@ ipch/
 # Profiling files
 *.vspx
 *.psess
+
+*.pdb
