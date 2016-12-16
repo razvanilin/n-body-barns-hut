@@ -2,9 +2,6 @@
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include "thrust\device_vector.h"
-#include "thrust\device_ptr.h"
-#include "thrust\device_malloc.h"
-#include "thrust\device_free.h"
 #include <curand.h>
 #include <curand_kernel.h>
 
@@ -19,7 +16,8 @@
 #include <omp.h>
 #include <thread>
 #include <random>
-#include <complex>
+#include <chrono>
+
 
 #define _PI 3.14159265      //Pi, used for calculations and rounded to 8 decimal places. 
 #define _GRAV_CONST 0.1     //the gravitational constant. This is the timestep between each frame. Lower for slower but more accurate simulations
@@ -65,47 +63,8 @@ sf::Color ObjColor(255, 255, 255, 128);         //the defult colour of the objec
 sf::View SimulationView;
 sf::RenderWindow window(sf::VideoMode(1920, 1080), "N-Body simulation");
 
-//int thread_count = std::thread::hardware_concurrency();
-
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
-
-__global__ void initKernel(curandState *state)
-{
-	int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	curand_init(1337, idx, 0, &state[idx]);
-}
-
-__global__ void make_rand(curandState *state, float *randArray)
-{
-	int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	randArray[idx] = curand_uniform(&state[idx]);
-}
-
-__global__ void addKernel(int *c, const int *a, const int *b)
-{
-    int i = threadIdx.x;
-    c[i] = a[i] + b[i];
-}
-
 int main()
 {
-    const int arraySize = 5;
-    const int a[arraySize] = { 1, 2, 3, 4, 5 };
-    const int b[arraySize] = { 10, 20, 30, 40, 50 };
-    int c[arraySize] = { 0 };
-
-    // Add vectors in parallel.
-    /*cudaError_t cudaStatus = addWithCuda(c, a, b, arraySize);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addWithCuda failed!");
-        return 1;
-    }
-
-    printf("{1,2,3,4,5} + {10,20,30,40,50} = {%d,%d,%d,%d,%d}\n",
-        c[0], c[1], c[2], c[3], c[4]);
-		*/
-	cudaDeviceSynchronize();
-
 	// N Body Code
 	try
 	{
@@ -155,11 +114,13 @@ int main()
 
 	// cudaDeviceReset must be called before exiting in order for profiling and
 	// tracing tools such as Nsight and Visual Profiler to show complete traces.
-	/*cudaStatus = cudaDeviceReset();
+	cudaError_t cudaStatus;
+
+	cudaStatus = cudaDeviceReset();
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaDeviceReset failed!");
 		return 1;
-	}*/
+	}
 
     return 0;
 }
@@ -293,20 +254,6 @@ inline void CalculateForce(Body* bi, Body* bj, float pSoftener)  //bi is being a
 	bi->forceY += vectory * force;
 }
 
-/*Body* CreateBody(float px, float py, float pmass, float pvx, float pvy)
-{
-	Body* Temp = new Body;
-
-	Temp->posX = px;
-	Temp->posY = py;
-	Temp->mass = pmass;
-	Temp->velX = pvx;
-	Temp->velY = pvy;
-	Temp->forceX = Temp->forceY = 0;
-
-	return Temp;
-}*/
-
 void DeleteBodies(std::vector<Body*> &pBodies)
 {
 	for (unsigned int i = 0; i < pBodies.size(); i++)
@@ -347,38 +294,6 @@ void PollEvent(sf::RenderWindow* pTarget, bool* pIsPaused, sf::View* pSimView)
 		SimulationView.move(0, -2 * zoom);
 
 	pTarget->setView(*pSimView);
-}
-
-__global__ void calculateDiskVars(int *particlesCount, float *width, float *height, float *minMass, const float *maxMass, float *minDist, float *maxDist, float *galacticCenterMass, float *varsArray)
-{
-	curandState_t state;
-
-	curand_init(0,0,0, &state);
-
-	unsigned int idx = (blockIdx.x * blockDim.x) + threadIdx.x;
-
-	//for (int i = 0; i < *particlesCount; ++i) {
-		float theta = curand_normal(&state) * 2 * 3.14159265;
-		float distanceCoefficient = curand_normal(&state);
-
-		float distance = *minDist + ((*maxDist - *minDist) * (distanceCoefficient * distanceCoefficient));
-
-		float positionx = cos(theta) * distance + (*width / 2);                                                             //set positionx and positiony to be the point you get when you go in the direction of 'angle' till you have traveled 'distance' 
-		float positiony = sin(theta) * distance + (*height / 2);
-
-		float orbitalVelocity = sqrt((*galacticCenterMass * static_cast <float> (_GRAV_CONST)) / distance);                  //Calculate the orbital velocity required to orbit the galatic centre   
-
-		float velocityx = (sin(theta) * orbitalVelocity);
-		float velocityy = (-cos(theta) * orbitalVelocity);
-
-		varsArray[0] = *maxMass;
-		varsArray[1] = positiony;
-		varsArray[2] = *minMass + (curand_normal(&state) * *maxMass);
-		varsArray[3] = velocityx;
-		varsArray[4] = velocityy;
-	//}
-	//varsArray[idx] = 1;
-	
 }
 
 __global__ void setup_curand(curandState_t *states)
@@ -447,7 +362,8 @@ __global__ void calculateVelocityY(curandState_t *states, float *minDist, float 
 
 void PopulateBodyVectorDisk(std::vector<Body*> *pBodies, float pWidth, float pHeight, float pMaxDist, float pMinDist, float pMinMass, float pMaxMass, float pGalaticCenterMass)
 {
-	
+	auto start = std::chrono::system_clock::now();
+
 	std::random_device rd;
 	std::mt19937 gen(rd());
 	std::uniform_real_distribution<float> dist(0, 1); //pMinDist, pMaxDist);
@@ -569,7 +485,6 @@ void PopulateBodyVectorDisk(std::vector<Body*> *pBodies, float pWidth, float pHe
 
 	setup_curand <<<pParticlesCount/1024, 1024 >>> (states);
 
-	
 	calculateMass <<<pParticlesCount/1024,1024>>> (states, minMass, maxMass, massArray);
 	calculatePosX <<<pParticlesCount / 1024, 1024 >>> (states, minDist, maxDist, width, posXArray);
 	calculatePosY <<<pParticlesCount / 1024, 1024 >>> (states, minDist, maxDist, height, posYArray);
@@ -590,7 +505,7 @@ void PopulateBodyVectorDisk(std::vector<Body*> *pBodies, float pWidth, float pHe
 
 	// create the bodies
 	for (int i = 0; i < pParticlesCount; i++) {
-		std::cout << posXResults[i] << " " << posYResults[i] << " " << massResults[i] << " " << velocityXResults[i] << " " << velocityYResults[i] << std::endl;
+		//std::cout << posXResults[i] << " " << posYResults[i] << " " << massResults[i] << " " << velocityXResults[i] << " " << velocityYResults[i] << std::endl;
 		float theta = angle(gen);
 		float distanceCoefficient = dist(gen);
 
@@ -606,8 +521,8 @@ void PopulateBodyVectorDisk(std::vector<Body*> *pBodies, float pWidth, float pHe
 
 		//std::cout << positionx << " " << positiony << " " << mass(gen) << " " << velocityx << " " << velocityy << std::endl;
 
-		//pBodies->push_back(new Body(positionx, positiony, mass(gen), velocityx, velocityy));
-		pBodies->push_back(new Body(posXResults[i], posYResults[i], mass(gen), velocityXResults[i], velocityYResults[i]));
+		pBodies->push_back(new Body(positionx, positiony, mass(gen), velocityx, velocityy));
+		//pBodies->push_back(new Body(posXResults[i], posYResults[i], mass(gen)));
 	}
 
 	cudaFree(massArray);
@@ -623,6 +538,10 @@ void PopulateBodyVectorDisk(std::vector<Body*> *pBodies, float pWidth, float pHe
 	cudaFree(maxDist);
 	cudaFree(galacticCenterMass);
 	cudaFree(states);
+
+	auto end = std::chrono::system_clock::now();
+	auto total = end - start;
+	std::cout << "Time: " << std::chrono::duration_cast<std::chrono::milliseconds>(total).count() << std::endl;
 }
 
 
@@ -717,84 +636,4 @@ void UpdateBodies(std::vector<Body*> &pBodies)
 		pBodies.at(i)->posX += pBodies.at(i)->velX;
 		pBodies.at(i)->posY += pBodies.at(i)->velY;
 	}
-}
-
-// Helper function for using CUDA to add vectors in parallel.
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
-{
-    int *dev_a = 0;
-    int *dev_b = 0;
-    int *dev_c = 0;
-    cudaError_t cudaStatus;
-
-    // Choose which GPU to run on, change this on a multi-GPU system.
-    cudaStatus = cudaSetDevice(0);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
-        goto Error;
-    }
-
-    // Allocate GPU buffers for three vectors (two input, one output)    .
-    cudaStatus = cudaMalloc((void**)&dev_c, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-    cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-    cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-    // Copy input vectors from host memory to GPU buffers.
-    cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-    cudaStatus = cudaMemcpy(dev_b, b, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-    // Launch a kernel on the GPU with one thread for each element.
-    addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
-	
-    // Check for any errors launching the kernel
-    cudaStatus = cudaGetLastError();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-        goto Error;
-    }
-    
-    // cudaDeviceSynchronize waits for the kernel to finish, and returns
-    // any errors encountered during the launch.
-    cudaStatus = cudaDeviceSynchronize();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
-        goto Error;
-    }
-
-    // Copy output vector from GPU buffer to host memory.
-    cudaStatus = cudaMemcpy(c, dev_c, size * sizeof(int), cudaMemcpyDeviceToHost);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-Error:
-    cudaFree(dev_c);
-    cudaFree(dev_a);
-    cudaFree(dev_b);
-    
-    return cudaStatus;
 }
