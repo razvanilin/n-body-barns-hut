@@ -1,6 +1,11 @@
-
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
+#include "thrust\device_vector.h"
+#include "thrust\device_ptr.h"
+#include "thrust\device_malloc.h"
+#include "thrust\device_free.h"
+#include <curand.h>
+#include <curand_kernel.h>
 
 #include <stdio.h>
 
@@ -8,10 +13,12 @@
 #include "Node.h"
 #include <ctime>
 #include <math.h>
+#include <cmath>
 #include <vector>
 #include <omp.h>
 #include <thread>
 #include <random>
+#include <complex>
 
 #define _PI 3.14159265      //Pi, used for calculations and rounded to 8 decimal places. 
 #define _GRAV_CONST 0.1     //the gravitational constant. This is the timestep between each frame. Lower for slower but more accurate simulations
@@ -97,6 +104,11 @@ int main()
 	PopulateBodyVectorDisk(&Bodies, NumParticles, SimWidth, SimHeight, DiskRadiusMax, DiskRadiusMin, ObjectMassMin, ObjectMassMax, GalaticCenterMass);
 	SetView(&SimulationView, &window, ViewWidth, ViewHeight);
 
+	sf::Clock clock;
+	float lastTime = 0;
+	int frames = 0;
+	float avgFps = 0;
+
 	while (window.isOpen())
 	{
 		PollEvent(&window, &IsPaused, &SimulationView); //These will always be done
@@ -112,7 +124,16 @@ int main()
 		}
 
 		Render(&window, Bodies, ObjColor);
+
+		float currentTime = clock.restart().asSeconds();
+		float fps = 1.f / currentTime;
+		avgFps += fps;
+		++frames;
+
+		lastTime = currentTime;
 	}
+
+	std::cout << "avg: " << avgFps / frames << std::endl;
 
 	DeleteBodies(Bodies);
 
