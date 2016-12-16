@@ -30,7 +30,7 @@ void CalculateForce(Body* bi, Body* bj, float pSoftener);                       
 //Body* CreateBody(float px, float py, float pmass, float pvx = 0, float pvy = 0);                                                        //return a pointer to new body object defined on the heap with given paramiters
 void DeleteBodies(std::vector<Body*> &pBodies);                                                                                          //Deletes objects pointed to by given vector
 void PollEvent(sf::RenderWindow* pTarget, bool* pIsPaused, sf::View* pSimView);                                                         //Call all polled events for the sf::window
-void PopulateBodyVectorDisk(std::vector<Body*> *pBodies, unsigned int pParticlesCount, float pWidth, float pHeight, float pMaxDist, float pMinDist, float pMinMass, float pMaxMass, float pGalaticCenterMass = 0);  //populate given vector with bodies with given paramiters in a disk formation
+void PopulateBodyVectorDisk(std::vector<Body*> *pBodies, float pWidth, float pHeight, float pMaxDist, float pMinDist, float pMinMass, float pMaxMass, float pGalaticCenterMass = 0);  //populate given vector with bodies with given paramiters in a disk formation
 void Render(sf::RenderWindow* pTarget, std::vector<Body*> pBodies, sf::Color pObjColor);                                                //Render given body objects to given screen
 void SetView(sf::View* pView, sf::RenderWindow* pTarget, float pViewWidth, float pViewHeight);                                          //set the window to the simulation view
 void UpdateBodies(std::vector<Body*> &pBodies);                                                                                          //Calculate velocity chance from the bodies force exerted since last update, update position based on velocity, reset force to 0
@@ -44,14 +44,14 @@ void RepellFromCenter(std::vector<Body*> &pBodies, float width, float height, fl
 float const DiskRadiusMax = 20000;              //Max and min distances objects will be from the galatic center
 float const DiskRadiusMin = 50;
 float const GalaticCenterMass = 1000000;        //The mass of the very large object simulating a black hole at the center of a galixy;
-float const ObjectMassMax = 2;                  //The max and min mass of the objects in the galixy
+float const ObjectMassMax = 10;                  //The max and min mass of the objects in the galixy
 float const ObjectMassMin = 1;
 float const SimWidth = 327680;                  //Width and height of simulation, needs to be large, particles outside of this range will not be included in the octree
 float const SimHeight = 327680;
 float const ViewWidth = 1920;                   //Width and height of view of the simulation for the screen. 
 float const ViewHeight = 1080;
 float const Softener = 10;                      //A softener used for the force calculations, 10 is a good amount
-unsigned int const NumParticles = 10000;        //Number of particles in simtulation, currently 2^15                                
+#define pParticlesCount 10000       //Number of particles in simtulation, currently 2^15                                
 double const _NODE_THRESHOLD = 0.5;             //Threshold for node calculations   
 
 float zoom = 1;                                 //The current amount of zoom in or out the user has inputed in total
@@ -69,6 +69,18 @@ sf::RenderWindow window(sf::VideoMode(1920, 1080), "N-Body simulation");
 
 cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
 
+__global__ void initKernel(curandState *state)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	curand_init(1337, idx, 0, &state[idx]);
+}
+
+__global__ void make_rand(curandState *state, float *randArray)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	randArray[idx] = curand_uniform(&state[idx]);
+}
+
 __global__ void addKernel(int *c, const int *a, const int *b)
 {
     int i = threadIdx.x;
@@ -83,7 +95,7 @@ int main()
     int c[arraySize] = { 0 };
 
     // Add vectors in parallel.
-    cudaError_t cudaStatus = addWithCuda(c, a, b, arraySize);
+    /*cudaError_t cudaStatus = addWithCuda(c, a, b, arraySize);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "addWithCuda failed!");
         return 1;
@@ -91,18 +103,24 @@ int main()
 
     printf("{1,2,3,4,5} + {10,20,30,40,50} = {%d,%d,%d,%d,%d}\n",
         c[0], c[1], c[2], c[3], c[4]);
-
-    // cudaDeviceReset must be called before exiting in order for profiling and
-    // tracing tools such as Nsight and Visual Profiler to show complete traces.
-    cudaStatus = cudaDeviceReset();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceReset failed!");
-        return 1;
-    }
+		*/
+	cudaDeviceSynchronize();
 
 	// N Body Code
-	PopulateBodyVectorDisk(&Bodies, NumParticles, SimWidth, SimHeight, DiskRadiusMax, DiskRadiusMin, ObjectMassMin, ObjectMassMax, GalaticCenterMass);
+	try
+	{
+		PopulateBodyVectorDisk(&Bodies, SimWidth, SimHeight, DiskRadiusMax, DiskRadiusMin, ObjectMassMin, ObjectMassMax, GalaticCenterMass);
+	}
+	catch (const std::exception &exc)
+	{
+		std::cerr << exc.what();
+	}
 	SetView(&SimulationView, &window, ViewWidth, ViewHeight);
+
+	sf::Clock clock;
+	float lastTime = 0;
+	int frames = 0;
+	float avgFps = 0;
 
 	while (window.isOpen())
 	{
@@ -119,9 +137,29 @@ int main()
 		}
 
 		Render(&window, Bodies, ObjColor);
+		
+		float currentTime = clock.restart().asSeconds();
+		float fps = 1.f / currentTime;
+		avgFps += fps;
+		++frames;
+		
+		lastTime = currentTime;
+
 	}
 
+	std::cout << "avg: " << avgFps / frames << std::endl;
+
+
 	DeleteBodies(Bodies);
+	// --------------------------------
+
+	// cudaDeviceReset must be called before exiting in order for profiling and
+	// tracing tools such as Nsight and Visual Profiler to show complete traces.
+	/*cudaStatus = cudaDeviceReset();
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaDeviceReset failed!");
+		return 1;
+	}*/
 
     return 0;
 }
@@ -311,17 +349,248 @@ void PollEvent(sf::RenderWindow* pTarget, bool* pIsPaused, sf::View* pSimView)
 	pTarget->setView(*pSimView);
 }
 
-void PopulateBodyVectorDisk(std::vector<Body*> *pBodies, unsigned int pParticlesCount, float pWidth, float pHeight, float pMaxDist, float pMinDist, float pMinMass, float pMaxMass, float pGalaticCenterMass)
+__global__ void calculateDiskVars(int *particlesCount, float *width, float *height, float *minMass, const float *maxMass, float *minDist, float *maxDist, float *galacticCenterMass, float *varsArray)
 {
+	curandState_t state;
 
+	curand_init(0,0,0, &state);
+
+	unsigned int idx = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+	//for (int i = 0; i < *particlesCount; ++i) {
+		float theta = curand_normal(&state) * 2 * 3.14159265;
+		float distanceCoefficient = curand_normal(&state);
+
+		float distance = *minDist + ((*maxDist - *minDist) * (distanceCoefficient * distanceCoefficient));
+
+		float positionx = cos(theta) * distance + (*width / 2);                                                             //set positionx and positiony to be the point you get when you go in the direction of 'angle' till you have traveled 'distance' 
+		float positiony = sin(theta) * distance + (*height / 2);
+
+		float orbitalVelocity = sqrt((*galacticCenterMass * static_cast <float> (_GRAV_CONST)) / distance);                  //Calculate the orbital velocity required to orbit the galatic centre   
+
+		float velocityx = (sin(theta) * orbitalVelocity);
+		float velocityy = (-cos(theta) * orbitalVelocity);
+
+		varsArray[0] = *maxMass;
+		varsArray[1] = positiony;
+		varsArray[2] = *minMass + (curand_normal(&state) * *maxMass);
+		varsArray[3] = velocityx;
+		varsArray[4] = velocityy;
+	//}
+	//varsArray[idx] = 1;
+	
+}
+
+__global__ void setup_curand(curandState_t *states)
+{
+	unsigned int idx = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+	curand_init(0, idx, 0, &states[idx]);
+}
+
+__global__ void calculateMass(curandState_t *states, float *minMass, float *maxMass, float *varsArray)
+{
+	unsigned int idx = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+	varsArray[threadIdx.x] = *minMass + (curand_uniform(&states[idx]) * (*maxMass));
+}
+
+__global__ void calculatePosX(curandState_t *states, float *minDist, float *maxDist, float *width, float *varsArray)
+{
+	unsigned int idx = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+	float theta = curand_uniform(&states[idx]) * 2 * 3.14159265;
+	float distanceCoefficient = curand_uniform(&states[idx]);
+
+	float distance = *minDist + ((*maxDist - *minDist) * (distanceCoefficient * distanceCoefficient));
+
+	varsArray[idx] = cos(theta) * distance + (*width / 2);
+}
+
+__global__ void calculatePosY(curandState_t *states, float *minDist, float *maxDist, float *height, float *varsArray)
+{
+	unsigned int idx = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+	float theta = curand_uniform(&states[idx]) * 2 * 3.14159265;
+	float distanceCoefficient = curand_uniform(&states[idx]);
+
+	float distance = *minDist + ((*maxDist - *minDist) * (distanceCoefficient * distanceCoefficient));
+
+	varsArray[idx] = sin(theta) * distance + (*height / 2);
+}
+
+__global__ void calculateVelocityX(curandState_t *states, float *minDist, float *maxDist, float *galacticCenterMass, float *varsArray)
+{
+	unsigned int idx = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+	float theta = curand_uniform(&states[idx]) * 2 * 3.14159265;
+	float distanceCoefficient = curand_uniform(&states[idx]);
+
+	float distance = *minDist + ((*maxDist - *minDist) * (distanceCoefficient * distanceCoefficient));
+	float orbitalVelocity = sqrt((*galacticCenterMass * static_cast <float> (_GRAV_CONST)) / distance);                  //Calculate the orbital velocity required to orbit the galatic centre   
+
+	varsArray[idx] = (sin(theta) * orbitalVelocity);
+}
+
+__global__ void calculateVelocityY(curandState_t *states, float *minDist, float *maxDist, float *galacticCenterMass, float *varsArray)
+{
+	unsigned int idx = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+	float theta = curand_uniform(&states[idx]) * 2 * 3.14159265;
+	float distanceCoefficient = curand_uniform(&states[idx]);
+
+	float distance = *minDist + ((*maxDist - *minDist) * (distanceCoefficient * distanceCoefficient));
+	float orbitalVelocity = sqrt((*galacticCenterMass * static_cast <float> (_GRAV_CONST)) / distance);                  //Calculate the orbital velocity required to orbit the galatic centre   
+
+	varsArray[idx] = (-cos(theta) * orbitalVelocity);
+}
+
+void PopulateBodyVectorDisk(std::vector<Body*> *pBodies, float pWidth, float pHeight, float pMaxDist, float pMinDist, float pMinMass, float pMaxMass, float pGalaticCenterMass)
+{
+	
 	std::random_device rd;
 	std::mt19937 gen(rd());
 	std::uniform_real_distribution<float> dist(0, 1); //pMinDist, pMaxDist);
 	std::uniform_real_distribution<float> angle(0, 2*_PI);
 	std::uniform_real_distribution<float> mass(pMinMass, pMaxMass);
+	
 
-	for (unsigned int i = 0; i < pParticlesCount; i++)
-	{
+	// cuda stuff
+	float *massArray;
+	float *posXArray;
+	float *posYArray;
+	float *velocityXArray;
+	float *velocityYArray;
+	float *width;
+	float *height;
+	float *minMass;
+	float *maxMass;
+	float *minDist;
+	float *maxDist;
+	float *galacticCenterMass;
+
+	curandState_t *states;
+
+	cudaError cudaStatus;
+
+	// Choose which GPU to run on, change this on a multi-GPU system.
+	cudaStatus = cudaSetDevice(0);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
+	}
+
+	cudaStatus = cudaMalloc((void**)&states, sizeof(curandState_t) * pParticlesCount);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+	}
+
+	cudaStatus = cudaMalloc((void**)&width, sizeof(float));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+	}
+	cudaStatus = cudaMalloc((void**)&height, sizeof(float));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+	}
+	cudaStatus = cudaMalloc((void**)&minMass, sizeof(float));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+	}
+	cudaStatus = cudaMalloc((void**)&maxMass, sizeof(float));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+	}
+	cudaStatus = cudaMalloc((void**)&minDist, sizeof(float));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+	}
+	cudaStatus = cudaMalloc((void**)&maxDist, sizeof(float));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+	}
+	cudaStatus = cudaMalloc((void**)&galacticCenterMass, sizeof(float));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+	}
+	cudaStatus = cudaMalloc((void**)&massArray, sizeof(float) * pParticlesCount);	// this array will contain all the values needed to create all the particles
+																// it is multiplied by 5 because there will be 5 variables for each Body
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+	}
+
+	cudaStatus = cudaMalloc((void**)&posXArray, sizeof(float) * pParticlesCount);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+	}
+
+	cudaStatus = cudaMalloc((void**)&posYArray, sizeof(float) * pParticlesCount);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+	}
+
+	cudaStatus = cudaMalloc((void**)&velocityXArray, sizeof(float) * pParticlesCount);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+	}
+
+	cudaStatus = cudaMalloc((void**)&velocityYArray, sizeof(float) * pParticlesCount);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+	}
+
+	cudaStatus = cudaMemcpy(width, &pWidth, sizeof(float), cudaMemcpyHostToDevice);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy width failed!");
+	}
+	cudaStatus = cudaMemcpy(height, &pHeight, sizeof(float), cudaMemcpyHostToDevice);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy height failed!");
+	}
+	cudaStatus = cudaMemcpy(minMass, &pMinMass, sizeof(float), cudaMemcpyHostToDevice);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy minMass failed!");
+	}
+	cudaStatus = cudaMemcpy(maxMass, &pMaxMass, sizeof(float), cudaMemcpyHostToDevice);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy maxMass failed!");
+	}
+	cudaStatus = cudaMemcpy(minDist, &pMinDist, sizeof(float), cudaMemcpyHostToDevice);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy minDist failed!");
+	}
+	cudaStatus = cudaMemcpy(maxDist, &pMaxDist, sizeof(float), cudaMemcpyHostToDevice);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy maxDist failed!");
+	}
+	cudaStatus = cudaMemcpy(galacticCenterMass, &pGalaticCenterMass, sizeof(float), cudaMemcpyHostToDevice);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy galactic failed!");
+	}
+
+	setup_curand <<<pParticlesCount/1024, 1024 >>> (states);
+
+	
+	calculateMass <<<pParticlesCount/1024,1024>>> (states, minMass, maxMass, massArray);
+	calculatePosX <<<pParticlesCount / 1024, 1024 >>> (states, minDist, maxDist, width, posXArray);
+	calculatePosY <<<pParticlesCount / 1024, 1024 >>> (states, minDist, maxDist, height, posYArray);
+	calculateVelocityX <<<pParticlesCount / 1024, 1024 >>> (states, minDist, maxDist, galacticCenterMass, velocityXArray);
+	calculateVelocityY <<<pParticlesCount / 1024, 1024 >>> (states, minDist, maxDist, galacticCenterMass, velocityYArray);
+
+	std::vector<float> massResults(pParticlesCount);
+	std::vector<float> posXResults(pParticlesCount);
+	std::vector<float> posYResults(pParticlesCount);
+	std::vector<float> velocityXResults(pParticlesCount);
+	std::vector<float> velocityYResults(pParticlesCount);
+
+	cudaMemcpy(&massResults[0], massArray, sizeof(float) * pParticlesCount, cudaMemcpyDeviceToHost);
+	cudaMemcpy(&posXResults[0], posXArray, sizeof(float) * pParticlesCount, cudaMemcpyDeviceToHost);
+	cudaMemcpy(&posYResults[0], posYArray, sizeof(float) * pParticlesCount, cudaMemcpyDeviceToHost);
+	cudaMemcpy(&velocityXResults[0], velocityXArray, sizeof(float) * pParticlesCount, cudaMemcpyDeviceToHost);
+	cudaMemcpy(&velocityYResults[0], velocityYArray, sizeof(float) * pParticlesCount, cudaMemcpyDeviceToHost);
+
+	// create the bodies
+	for (int i = 0; i < pParticlesCount; i++) {
+		std::cout << posXResults[i] << " " << posYResults[i] << " " << massResults[i] << " " << velocityXResults[i] << " " << velocityYResults[i] << std::endl;
 		float theta = angle(gen);
 		float distanceCoefficient = dist(gen);
 
@@ -335,9 +604,25 @@ void PopulateBodyVectorDisk(std::vector<Body*> *pBodies, unsigned int pParticles
 		float velocityx = (sin(theta) * orbitalVelocity);
 		float velocityy = (-cos(theta) * orbitalVelocity);
 
-		pBodies->push_back(new Body(positionx, positiony, mass(gen), velocityx, velocityy));
+		//std::cout << positionx << " " << positiony << " " << mass(gen) << " " << velocityx << " " << velocityy << std::endl;
 
+		//pBodies->push_back(new Body(positionx, positiony, mass(gen), velocityx, velocityy));
+		pBodies->push_back(new Body(posXResults[i], posYResults[i], mass(gen), velocityXResults[i], velocityYResults[i]));
 	}
+
+	cudaFree(massArray);
+	cudaFree(posXArray);
+	cudaFree(posYArray);
+	cudaFree(velocityXArray);
+	cudaFree(velocityYArray);
+	cudaFree(width);
+	cudaFree(height);
+	cudaFree(minMass);
+	cudaFree(maxMass);
+	cudaFree(minDist);
+	cudaFree(maxDist);
+	cudaFree(galacticCenterMass);
+	cudaFree(states);
 }
 
 
