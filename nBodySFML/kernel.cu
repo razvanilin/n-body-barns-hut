@@ -104,6 +104,11 @@ int main()
 	PopulateBodyVectorDisk(&Bodies, NumParticles, SimWidth, SimHeight, DiskRadiusMax, DiskRadiusMin, ObjectMassMin, ObjectMassMax, GalaticCenterMass);
 	SetView(&SimulationView, &window, ViewWidth, ViewHeight);
 
+	sf::Clock clock;
+	float lastTime = 0;
+	int frames = 0;
+	float avgFps = 0;
+
 	while (window.isOpen())
 	{
 		PollEvent(&window, &IsPaused, &SimulationView); //These will always be done
@@ -119,7 +124,16 @@ int main()
 		}
 
 		Render(&window, Bodies, ObjColor);
+
+		float currentTime = clock.restart().asSeconds();
+		float fps = 1.f / currentTime;
+		avgFps += fps;
+		++frames;
+
+		lastTime = currentTime;
 	}
+
+	std::cout << "avg: " << avgFps / frames << std::endl;
 
 	DeleteBodies(Bodies);
 
@@ -182,7 +196,6 @@ void BodyAttraction(std::vector<Body*> &pBodies, float pSoftener)
 
 void OctreeBodyAttraction()
 {
-
 	for (unsigned int i = 0; i < Bodies.size(); i++)
 	{
 		CheckNode(&GlobalNode, Bodies[i]);
